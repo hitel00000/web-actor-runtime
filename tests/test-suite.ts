@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { WebActorRuntime } from './runtime.js';
-import { WebActor, FunctionActor } from './actor.js';
-import { ArtifactFilterGate, JoinGate, TopicGate } from './gate.js';
-import { topicTrigger, SingleArtifactResolver, CorrelationJoinResolver } from './resolver.js';
-import { ArtifactStore } from './store.js';
-import { EventBus } from './bus.js';
-import { startDemoServer } from './demo-server.js';
-import type { Artifact, Event } from './types.js';
+import { WebActorRuntime } from '../src/runtime.js';
+import { WebActor, FunctionActor } from '../src/actor.js';
+import { ArtifactFilterGate, JoinGate, TopicGate } from '../src/gate.js';
+import { topicTrigger, SingleArtifactResolver, CorrelationJoinResolver } from '../src/resolver.js';
+import { ArtifactStore } from '../src/store.js';
+import { EventBus } from '../src/bus.js';
+import { startDemoServer } from '../src/demo-server.js';
+import type { Artifact, Event } from '../src/types.js';
 
 let testServerPort = 4180;
 
