@@ -10,6 +10,8 @@
     "dashboard": "tsx src/dashboard-server.ts",
     "setup:login": "tsx src/setup-login.ts",
     "test": "tsx tests/test-suite.ts",
+    "test:concurrency": "tsx tests/test-persistent-concurrency.ts",
+    "test:all": "tsx tests/test-suite.ts && tsx tests/test-persistent-concurrency.ts",
     "typecheck": "tsc --noEmit"
   },
   "engines": {

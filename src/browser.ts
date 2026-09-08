@@ -22,6 +22,10 @@ export class BrowserRuntime {
     return context.newPage();
   }
 
+  releasePage(_page?: Page): void {
+    // no-op for ephemeral browser runtime
+  }
+
   async stop(): Promise<void> {
     for (const context of this.contexts.values()) await context.close();
     await this.browser?.close();

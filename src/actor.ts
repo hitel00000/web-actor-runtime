@@ -54,46 +54,52 @@ export class WebActor implements Actor {
     );
 
     const page = await ctx.browser.page(this.profile);
-    await this.adapter.open(page, this.url);
+    try {
+      await this.adapter.open(page, this.url);
 
-    const prompt = this.buildPrompt(ctx.inputs, ctx);
-    await this.adapter.send(page, prompt);
-    const response = await this.adapter.waitForResponse(page);
+      const prompt = this.buildPrompt(ctx.inputs, ctx);
+      await this.adapter.send(page, prompt);
+      const response = await this.adapter.waitForResponse(page);
 
-    const correlationId =
-      ctx.event.correlationId ??
-      (ctx.inputs[0]?.metadata?.correlationId as string | undefined) ??
-      randomUUID();
+      const correlationId =
+        ctx.event.correlationId ??
+        (ctx.inputs[0]?.metadata?.correlationId as string | undefined) ??
+        randomUUID();
 
-    const parentIds = ctx.inputs.map((a) => a.id);
+      const parentIds = ctx.inputs.map((a) => a.id);
 
-    const artifact: Artifact = {
-      id: randomUUID(),
-      type: this.outputType,
-      content: response,
-      createdBy: this.id,
-      createdAt: new Date().toISOString(),
-      parentIds,
-      metadata: {
+      const artifact: Artifact = {
+        id: randomUUID(),
+        type: this.outputType,
+        content: response,
+        createdBy: this.id,
+        createdAt: new Date().toISOString(),
+        parentIds,
+        metadata: {
+          correlationId,
+          inputTopic: ctx.event.topic,
+          sourceInputs: parentIds,
+        },
+      };
+
+      ctx.store.put(artifact);
+      console.log(`[Actor:${this.id}] Created ${artifact.type} artifact ${artifact.id}`);
+
+      await ctx.bus.publish({
+        id: randomUUID(),
+        topic: this.outputTopic,
+        source: this.id,
+        artifactId: artifact.id,
         correlationId,
-        inputTopic: ctx.event.topic,
-        sourceInputs: parentIds,
-      },
-    };
+        timestamp: new Date().toISOString(),
+      });
 
-    ctx.store.put(artifact);
-    console.log(`[Actor:${this.id}] Created ${artifact.type} artifact ${artifact.id}`);
-
-    await ctx.bus.publish({
-      id: randomUUID(),
-      topic: this.outputTopic,
-      source: this.id,
-      artifactId: artifact.id,
-      correlationId,
-      timestamp: new Date().toISOString(),
-    });
-
-    return artifact;
+      return artifact;
+    } finally {
+      if (typeof ctx.browser.releasePage === 'function') {
+        ctx.browser.releasePage(page);
+      }
+    }
   }
 }
 

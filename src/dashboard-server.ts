@@ -733,6 +733,15 @@ export function startDashboard(port = 3000) {
   return server;
 }
 
+process.on('SIGINT', async () => {
+  await stopPipeline();
+  process.exit(0);
+});
+process.on('SIGTERM', async () => {
+  await stopPipeline();
+  process.exit(0);
+});
+
 if (process.argv[1]?.endsWith('dashboard-server.ts') || process.argv[1]?.endsWith('dashboard-server.js')) {
   startDashboard(3000);
 }

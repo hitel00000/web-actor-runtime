@@ -127,54 +127,56 @@ Goal: Leverage independent browser contexts for ChatGPT, Gemini, and Claude with
   console.log(`\n[System] Seed Proposal Artifact created: ${seedProposal.id}`);
   console.log(`[System] Publishing 'proposal.created' event to EventBus...\n`);
 
-  // Wait for the final convergence from Claude OR early failure from an upstream actor
-  const finalDonePromise = runtime.bus.waitFor(
-    (e) => e.topic === 'claude.completed' && e.correlationId === correlationId,
-    180000
-  );
+  try {
+    // Wait for the final convergence from Claude OR early failure from an upstream actor
+    const finalDonePromise = runtime.bus.waitFor(
+      (e) => e.topic === 'claude.completed' && e.correlationId === correlationId,
+      180000
+    );
 
-  const failurePromise = new Promise<never>((_, reject) => {
-    runtime.bus.on('actor.failed', (e) => {
-      if (e.correlationId === correlationId) {
-        const errorMsg = (e.payload as any)?.error ?? 'Unknown actor execution error';
-        reject(new Error(`[Pipeline Aborted] Upstream actor '${e.source}' failed: ${errorMsg}`));
-      }
+    const failurePromise = new Promise<never>((_, reject) => {
+      runtime.bus.on('actor.failed', (e) => {
+        if (e.correlationId === correlationId) {
+          const errorMsg = (e.payload as any)?.error ?? 'Unknown actor execution error';
+          reject(new Error(`[Pipeline Aborted] Upstream actor '${e.source}' failed: ${errorMsg}`));
+        }
+      });
     });
-  });
 
-  await runtime.bus.publish({
-    id: randomUUID(),
-    topic: 'proposal.created',
-    source: 'system',
-    artifactId: seedProposal.id,
-    correlationId,
-    timestamp: new Date().toISOString(),
-  });
+    await runtime.bus.publish({
+      id: randomUUID(),
+      topic: 'proposal.created',
+      source: 'system',
+      artifactId: seedProposal.id,
+      correlationId,
+      timestamp: new Date().toISOString(),
+    });
 
-  // Race between completion and upstream failure
-  const finalEvent = await Promise.race([finalDonePromise, failurePromise]);
-  console.log(`\n[Event] Received final event: ${finalEvent.topic} (Artifact: ${finalEvent.artifactId})`);
+    // Race between completion and upstream failure
+    const finalEvent = await Promise.race([finalDonePromise, failurePromise]);
+    console.log(`\n[Event] Received final event: ${finalEvent.topic} (Artifact: ${finalEvent.artifactId})`);
 
-  await runtime.waitForIdle();
+    await runtime.waitForIdle();
 
-  const finalArtifact = runtime.store.get(finalEvent.artifactId!);
+    const finalArtifact = runtime.store.get(finalEvent.artifactId!);
 
-  console.log('\n=============================================================');
-  console.log('  FREE-TIER LLM ORCHESTRATION COMPLETED SUCCESSFULLY');
-  console.log('=============================================================');
-  console.log('\nFinal Synthesized Output from Claude:\n');
-  console.log(finalArtifact.content);
+    console.log('\n=============================================================');
+    console.log('  FREE-TIER LLM ORCHESTRATION COMPLETED SUCCESSFULLY');
+    console.log('=============================================================');
+    console.log('\nFinal Synthesized Output from Claude:\n');
+    console.log(finalArtifact.content);
 
-  console.log('\n=============================================================');
-  console.log('  FULL ARTIFACT LINEAGE PROVENANCE');
-  console.log('=============================================================');
-  const lineage = runtime.store.getLineage(finalArtifact.id);
-  printLineage(lineage);
-
-  console.log('\n[System] Shutting down browser contexts and server...');
-  await runtime.stop();
-  if (server) server.close();
-  console.log('[System] Done.');
+    console.log('\n=============================================================');
+    console.log('  FULL ARTIFACT LINEAGE PROVENANCE');
+    console.log('=============================================================');
+    const lineage = runtime.store.getLineage(finalArtifact.id);
+    printLineage(lineage);
+  } finally {
+    console.log('\n[System] Shutting down browser contexts and server...');
+    await runtime.stop().catch(() => undefined);
+    if (server) server.close();
+    console.log('[System] Done.');
+  }
 }
 
 main().catch(async (err) => {
