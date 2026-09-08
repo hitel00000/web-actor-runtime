@@ -27,6 +27,13 @@ async function typeIntoRichEditor(page: Page, inputLocator: Locator, text: strin
   await page.waitForTimeout(500);
 }
 
+function cleanExtractedText(text: string): string {
+  return text
+    .replace(/^ChatGPT said:\s*/i, '')
+    .replace(/\b(Copy response|Copy message|Share|Read aloud|Good response|Bad response)\b/gi, '')
+    .trim();
+}
+
 /**
  * Universal helper that waits for an LLM streaming response to complete.
  * Watches for text growth and detects when output has stabilized for a given duration,
@@ -72,22 +79,37 @@ async function waitForStreamingContent(
 
     if (count > 0) {
       containerFound = true;
-      const currentLocator = locator.last();
+
+      // Find the best non-empty container among matched candidates (searching backwards to skip empty wrapper tags)
+      let currentLocator = locator.last();
+      let rawText = (await currentLocator.innerText().catch(() => '')).trim();
+
+      if (!rawText && count > 1) {
+        for (let idx = count - 1; idx >= 0; idx--) {
+          const candidate = locator.nth(idx);
+          const candidateText = (await candidate.innerText().catch(() => '')).trim();
+          if (candidateText.length > 0) {
+            currentLocator = candidate;
+            rawText = candidateText;
+            break;
+          }
+        }
+      }
 
       // Check if copy button is visible and stop button is gone
       if (selectors.stopButton && selectors.copyButton) {
         const stopVisible = await page.locator(selectors.stopButton).first().isVisible().catch(() => false);
         const copyVisible = await page.locator(selectors.copyButton).last().isVisible().catch(() => false);
         if (!stopVisible && copyVisible) {
-          const finalText = await currentLocator.innerText().catch(() => '');
-          if (finalText.trim().length > 0) {
-            return finalText.trim();
+          const cleaned = cleanExtractedText(rawText);
+          if (cleaned.length > 0) {
+            return cleaned;
           }
         }
       }
 
       // Check text content stabilization
-      const currentText = (await currentLocator.innerText().catch(() => '')).trim();
+      const currentText = cleanExtractedText(rawText);
 
       if (currentText.length > 0 && currentText !== lastText) {
         lastText = currentText;
@@ -131,21 +153,33 @@ export class ChatGPTAdapter implements WebAdapter {
       await dismissBtn.click().catch(() => undefined);
     }
 
-    // Wait for the prompt input
-    await page.waitForSelector('#prompt-textarea, div[contenteditable="true"], textarea', {
-      timeout: 30000,
-    });
+    // Wait for the prompt input (supports new 2025/2026 textarea & legacy rich editor)
+    await page.waitForSelector(
+      '#mobile-composer-prompt, textarea[name="prompt"], #prompt-textarea, textarea[placeholder*="ChatGPT"], div[contenteditable="true"], textarea',
+      { timeout: 30000 }
+    );
   }
 
   async send(page: Page, text: string): Promise<void> {
-    const inputLocator = page.locator('#prompt-textarea, div[contenteditable="true"], textarea').first();
-    await inputLocator.waitFor({ state: 'visible', timeout: 15000 });
+    const inputLocator = page.locator(
+      '#mobile-composer-prompt, textarea[name="prompt"], textarea[placeholder*="ChatGPT"], #prompt-textarea, div[contenteditable="true"], textarea'
+    ).first();
+    await inputLocator.waitFor({ state: 'visible', timeout: 20000 });
 
-    // Type text using rich editor helper to trigger ProseMirror React state
-    await typeIntoRichEditor(page, inputLocator, text);
+    const isTextarea = await inputLocator.evaluate((el) => el.tagName.toLowerCase() === 'textarea').catch(() => false);
+    if (isTextarea) {
+      await inputLocator.scrollIntoViewIfNeeded().catch(() => undefined);
+      await inputLocator.click();
+      await inputLocator.fill(text);
+      await page.waitForTimeout(400);
+    } else {
+      await typeIntoRichEditor(page, inputLocator, text);
+    }
 
     // Wait up to 3 seconds for the send button to become enabled
-    const sendBtn = page.locator('button[data-testid="send-button"], button[aria-label*="Send"], button[aria-label*="보내기"]').first();
+    const sendBtn = page.locator(
+      'button[aria-label="Send message"], button.wm-composer-submitButton, button[data-testid="send-button"], button[aria-label*="Send"], button[aria-label*="보내기"]'
+    ).first();
     let sent = false;
 
     for (let i = 0; i < 6; i++) {
@@ -171,19 +205,23 @@ export class ChatGPTAdapter implements WebAdapter {
       page,
       'ChatGPT',
       {
-        // Resilient selectors covering various ChatGPT web versions & DOM structures
+        // Resilient selectors covering new 2025/2026 UI and legacy DOM structures
         container: [
+          '[data-assistant-markdown]',
+          'li[data-message-role="assistant"] div[class*="messageCopy"]',
+          'div[class*="_wdUoQG_messageCopy"]',
+          'div[class*="assistantMessage"]',
+          'li[data-message-role="assistant"]',
           '[data-message-author-role="assistant"] .markdown',
           '[data-message-author-role="assistant"]',
           'div.agent-turn .markdown',
           'div.agent-turn',
           'article[data-testid^="conversation-turn-"] .markdown',
           'article:has(button[data-testid*="copy"])',
-          'div.prose',
           '#response',
         ].join(', '),
-        stopButton: 'button[data-testid="stop-button"], button[aria-label*="Stop"]',
-        copyButton: 'button[data-testid*="copy"], button[aria-label*="Copy"], .copy-button',
+        stopButton: 'button[aria-label*="Stop"], button.wm-composer-stopButton, button[data-testid="stop-button"], button[aria-label*="중지"]',
+        copyButton: 'button[aria-label="Copy response"], button[aria-label*="Copy response"], button[data-testid*="copy"], button[aria-label*="Copy"], button[aria-label*="복사"], .copy-button',
         errorSelector: '[data-testid="error-banner"], .text-red-500, .error-message',
       },
       this.options.timeoutMs ?? 90000,
