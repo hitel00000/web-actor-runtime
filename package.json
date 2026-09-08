@@ -7,6 +7,7 @@
     "demo": "tsx src/demo.ts",
     "demo:llm": "tsx src/live-demo.ts",
     "demo:llm:live": "tsx src/live-demo.ts --live",
+    "dashboard": "tsx src/dashboard-server.ts",
     "setup:login": "tsx src/setup-login.ts",
     "test": "tsx tests/test-suite.ts",
     "typecheck": "tsc --noEmit"

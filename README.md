@@ -88,6 +88,7 @@ web-actor-runtime/
 │   ├── demo-server.ts          # 역할별 로컬 웹 UI 및 LLM 스트리밍 시뮬레이터 서버
 │   ├── demo.ts                 # 4대 Web Actor 탈중앙화 데모
 │   ├── live-demo.ts            # Free-Tier Web LLM 수직 슬라이스 데모
+│   ├── dashboard-server.ts     # 웹 UI 제어판 및 SSE 실시간 스트리밍 서버
 │   └── setup-login.ts          # 1회성 웹 LLM 브라우저 로그인 도구
 ├── tests/                      # 통합 및 회귀 테스트 스위트
 │   └── test-suite.ts           # 12개 핵심 통합 테스트
@@ -100,12 +101,20 @@ web-actor-runtime/
 
 ## 🚀 실행 가이드
 
-### 1. 의존성 설치
+### 1. 웹 UI 제어판 (Web Control Panel) — 추천 ⭐
 ```bash
-npm install
+npm run dashboard
 ```
+- 브라우저에서 `http://localhost:3000` 접속
+- **프롬프트 커스텀 지시문 입력**: Seed Document 및 각 LLM(ChatGPT, Gemini, Claude)별 역할 프롬프트 자유 편집
+- **3대 내장 프리셋**:
+  - 🏗️ *아키텍처 리뷰 & 종합 ADR*
+  - 🛡️ *코드 보안 및 리팩토링 검토*
+  - 💼 *사업 기획 & 시장성 분석*
+- **모드 전환**: 시뮬레이션 모드 (즉시 검증) ⟷ 실제 라이브 웹 LLM 모드
+- **실시간 SSE 스트리밍**: 3대 액터 상태(스트리밍 중/완료), 실시간 EventBus 로그, 최종 산출물 및 계보 트리 실시간 렌더링
 
-### 2. 4대 Web Actor 자율 워크플로우 데모
+### 2. CLI 4대 Web Actor 자율 워크플로우 데모
 ```bash
 npm run demo
 ```
