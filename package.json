@@ -1,0 +1,25 @@
+{
+  "name": "web-actor-runtime-mvp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "demo": "tsx src/demo.ts",
+    "demo:llm": "tsx src/live-demo.ts",
+    "demo:llm:live": "tsx src/live-demo.ts --live",
+    "setup:login": "tsx src/setup-login.ts",
+    "test": "tsx src/test-suite.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "dependencies": {
+    "playwright": "^1.55.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.20.3",
+    "typescript": "^5.9.2"
+  }
+}
