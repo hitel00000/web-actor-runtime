@@ -64,14 +64,7 @@ export class PersistentBrowserRuntime {
     return context;
   }
 
-  async page(profileName: string): Promise<Page> {
-    const ctx = await this.context(profileName);
-    const pages = ctx.pages();
-    if (pages.length > 0 && !pages[0].isClosed()) {
-      return pages[0];
-    }
-    return ctx.newPage();
-  }
+  private busyPages = new Set<Page>();
 
   async stop(): Promise<void> {
     for (const [name, context] of this.contexts.entries()) {
@@ -82,5 +75,25 @@ export class PersistentBrowserRuntime {
       }
     }
     this.contexts.clear();
+    this.busyPages.clear();
+  }
+
+  async page(profileName: string): Promise<Page> {
+    const ctx = await this.context(profileName);
+    const pages = ctx.pages();
+    const available = pages.find((p) => !p.isClosed() && !this.busyPages.has(p));
+    if (available) {
+      this.busyPages.add(available);
+      available.once('close', () => this.busyPages.delete(available));
+      return available;
+    }
+    const newP = await ctx.newPage();
+    this.busyPages.add(newP);
+    newP.once('close', () => this.busyPages.delete(newP));
+    return newP;
+  }
+
+  releasePage(page: Page): void {
+    this.busyPages.delete(page);
   }
 }

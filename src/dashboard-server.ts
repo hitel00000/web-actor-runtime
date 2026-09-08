@@ -8,30 +8,35 @@ import { PersistentBrowserRuntime } from './persistent-browser.js';
 import { startDemoServer } from './demo-server.js';
 import type { Artifact, Event } from './types.js';
 
+export type LLMProvider = 'chatgpt' | 'gemini' | 'claude';
+
 interface RunConfig {
   mode: 'sim' | 'live';
   visible: boolean;
   seedText: string;
-  chatgptPrompt: string;
-  geminiPrompt: string;
-  claudePrompt: string;
+  reviewerProvider: LLMProvider;
+  summarizerProvider: LLMProvider;
+  synthesizerProvider: LLMProvider;
+  reviewerPrompt: string;
+  summarizerPrompt: string;
+  synthesizerPrompt: string;
 }
 
 const DEFAULT_SEED = `System Proposal: Decentralized Multi-Agent Orchestration via Browser-Mediated Free-Tier Web LLMs.
 Goal: Leverage independent browser contexts for ChatGPT, Gemini, and Claude without API keys, orchestrating them via reactive Event and Artifact convergence.`;
 
-const DEFAULT_CHATGPT_PROMPT = `[Role: Senior Software Architect]
+const DEFAULT_REVIEWER_PROMPT = `[Role: Senior Software Architect]
 Please review this proposal and provide a technical analysis of trade-offs, scalability, and risks:
 
 {input}`;
 
-const DEFAULT_GEMINI_PROMPT = `[Role: Executive Product Lead]
+const DEFAULT_SUMMARIZER_PROMPT = `[Role: Executive Product Lead]
 Summarize this proposal into 3 essential bullet points and target outcomes:
 
 {input}`;
 
-const DEFAULT_CLAUDE_PROMPT = `[Role: Principal Architect & Synthesizer]
-You have received inputs from ChatGPT (Technical Review) and Gemini (Executive Summary). Please synthesize them into an actionable, comprehensive architectural decision record (ADR):
+const DEFAULT_SYNTHESIZER_PROMPT = `[Role: Principal Architect & Synthesizer]
+You have received inputs from Technical Review and Executive Summary. Please synthesize them into an actionable, comprehensive architectural decision record (ADR):
 
 {inputs}`;
 
@@ -45,6 +50,32 @@ function broadcastSSE(data: Record<string, unknown>) {
   const payload = `data: ${JSON.stringify(data)}\n\n`;
   for (const res of sseClients) {
     res.write(payload);
+  }
+}
+
+function resolveProvider(provider: LLMProvider, isLive: boolean, simPort: number) {
+  switch (provider) {
+    case 'chatgpt':
+      return {
+        displayName: 'ChatGPT',
+        profile: 'chatgpt',
+        url: isLive ? 'https://chatgpt.com' : `http://127.0.0.1:${simPort}/sim/chatgpt`,
+        adapter: new ChatGPTAdapter({ timeoutMs: 90000, stabilityWaitMs: 2500 }),
+      };
+    case 'gemini':
+      return {
+        displayName: 'Gemini',
+        profile: 'gemini',
+        url: isLive ? 'https://gemini.google.com/app' : `http://127.0.0.1:${simPort}/sim/gemini`,
+        adapter: new GeminiAdapter({ timeoutMs: 90000, stabilityWaitMs: 2500 }),
+      };
+    case 'claude':
+      return {
+        displayName: 'Claude',
+        profile: 'claude',
+        url: isLive ? 'https://claude.ai/new' : `http://127.0.0.1:${simPort}/sim/claude`,
+        adapter: new ClaudeAdapter({ timeoutMs: 120000, stabilityWaitMs: 2500 }),
+      };
   }
 }
 
@@ -68,8 +99,8 @@ function renderHTML(): string {
       --warning: #f59e0b;
       --danger: #ef4444;
       --chatgpt: #10a37f;
-      --gemini: #1a73e8;
-      --claude: #d97706;
+      --gemini: #38bdf8;
+      --claude: #f59e0b;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); padding: 1.5rem; line-height: 1.5; }
@@ -91,7 +122,12 @@ function renderHTML(): string {
     input[type="text"], textarea, select {
       width: 100%; background: #0f172a; border: 1px solid var(--border); border-radius: 6px; padding: 0.6rem 0.75rem; color: var(--text); font-family: inherit; font-size: 0.9rem; margin-bottom: 1rem;
     }
-    textarea { font-family: monospace; resize: vertical; min-height: 90px; }
+    textarea { font-family: monospace; resize: vertical; min-height: 80px; }
+
+    .role-config-box { background: #0f172a; border: 1px solid var(--border); border-radius: 6px; padding: 0.9rem; margin-bottom: 1rem; }
+    .role-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
+    .role-title { font-weight: 700; font-size: 0.9rem; }
+    .role-select { width: auto; margin-bottom: 0; padding: 0.3rem 0.6rem; font-size: 0.85rem; }
 
     .options-row { display: flex; gap: 1rem; margin-bottom: 1rem; }
     .option-item { display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; }
@@ -104,7 +140,7 @@ function renderHTML(): string {
     /* Actors Pipeline Progress Grid */
     .pipeline { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-bottom: 1.5rem; }
     .actor-box { background: #0f172a; border: 1px solid var(--border); border-radius: 6px; padding: 1rem; text-align: center; }
-    .actor-name { font-weight: 700; font-size: 0.95rem; margin-bottom: 0.5rem; }
+    .actor-name { font-weight: 700; font-size: 0.9rem; margin-bottom: 0.5rem; }
     .actor-state { font-size: 0.8rem; font-weight: 600; padding: 0.2rem 0.5rem; border-radius: 4px; display: inline-block; }
     .actor-state.idle { background: #1e293b; color: var(--muted); }
     .actor-state.active { background: #1e3a8a; color: #93c5fd; }
@@ -135,20 +171,20 @@ function renderHTML(): string {
   </header>
 
   <div class="grid">
-    <!-- Left Column: Input & Prompts Configuration -->
+    <!-- Left Column: Input & Roles Configuration -->
     <div>
       <div class="card">
         <div class="card-title">
           <span>워크플로우 설정</span>
           <select id="presetSelect" style="width: auto; margin-bottom: 0; padding: 0.3rem 0.6rem;">
             <option value="arch">프리셋 1: 아키텍처 리뷰 & 종합 ADR</option>
-            <option value="code">프리셋 2: 코드 보안 및 리팩토링 검토</option>
-            <option value="biz">프리셋 3: 사업 기획 & 시장성 비판</option>
+            <option value="code">프리셋 2: 코드 보안 및 최적화 검토</option>
+            <option value="biz">프리셋 3: 사업 기획 & 시장성 분석</option>
           </select>
         </div>
 
         <label for="seedInput">초기 제안 / 작업 지시문 (Seed Document)</label>
-        <textarea id="seedInput" rows="4"></textarea>
+        <textarea id="seedInput" rows="3"></textarea>
 
         <div class="options-row">
           <div class="option-item">
@@ -157,7 +193,7 @@ function renderHTML(): string {
           </div>
           <div class="option-item">
             <input type="radio" id="modeLive" name="mode" value="live">
-            <label for="modeLive" style="margin:0; cursor:pointer;">실제 라이브 웹 (ChatGPT, Gemini, Claude)</label>
+            <label for="modeLive" style="margin:0; cursor:pointer;">실제 라이브 웹 LLM (자율 브라우저)</label>
           </div>
         </div>
 
@@ -166,21 +202,44 @@ function renderHTML(): string {
           <label for="visibleWindow" style="margin:0; cursor:pointer;">브라우저 창 화면에 표시 (Visible)</label>
         </div>
 
-        <details style="margin-bottom: 1.25rem; border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem;">
-          <summary style="cursor: pointer; font-weight: 600; font-size: 0.9rem; color: #38bdf8;">
-            ⚙️ 각 Actor별 프롬프트 세부 지시문 커스텀
-          </summary>
-          <div style="margin-top: 1rem;">
-            <label for="chatgptPrompt" style="color: var(--chatgpt);">ChatGPT 역할 프롬프트</label>
-            <textarea id="chatgptPrompt" rows="3"></textarea>
-
-            <label for="geminiPrompt" style="color: var(--gemini);">Gemini 역할 프롬프트</label>
-            <textarea id="geminiPrompt" rows="3"></textarea>
-
-            <label for="claudePrompt" style="color: var(--claude);">Claude 역할 프롬프트 (최종 합성)</label>
-            <textarea id="claudePrompt" rows="3"></textarea>
+        <!-- Role 1: Reviewer -->
+        <div class="role-config-box">
+          <div class="role-header">
+            <span class="role-title" style="color: #38bdf8;">🔍 역할 1: 기술 심층 분석 (Reviewer)</span>
+            <select id="reviewerProvider" class="role-select">
+              <option value="chatgpt" selected>ChatGPT (4o/Free)</option>
+              <option value="gemini">Gemini (2.0/Free)</option>
+              <option value="claude">Claude (3.5/Free)</option>
+            </select>
           </div>
-        </details>
+          <textarea id="reviewerPrompt" rows="2"></textarea>
+        </div>
+
+        <!-- Role 2: Summarizer -->
+        <div class="role-config-box">
+          <div class="role-header">
+            <span class="role-title" style="color: #34d399;">📝 역할 2: 핵심 요약 및 정리 (Summarizer)</span>
+            <select id="summarizerProvider" class="role-select">
+              <option value="gemini" selected>Gemini (2.0/Free)</option>
+              <option value="chatgpt">ChatGPT (4o/Free)</option>
+              <option value="claude">Claude (3.5/Free)</option>
+            </select>
+          </div>
+          <textarea id="summarizerPrompt" rows="2"></textarea>
+        </div>
+
+        <!-- Role 3: Synthesizer -->
+        <div class="role-config-box">
+          <div class="role-header">
+            <span class="role-title" style="color: #fbbf24;">🎯 역할 3: 최종 종합 및 수렴 (Synthesizer)</span>
+            <select id="synthesizerProvider" class="role-select">
+              <option value="claude" selected>Claude (3.5/Free)</option>
+              <option value="chatgpt">ChatGPT (4o/Free)</option>
+              <option value="gemini">Gemini (2.0/Free)</option>
+            </select>
+          </div>
+          <textarea id="synthesizerPrompt" rows="2"></textarea>
+        </div>
 
         <div style="display: flex; gap: 0.75rem;">
           <button id="runBtn" class="btn" style="flex: 1;">🚀 워크플로우 실행 (Run Pipeline)</button>
@@ -193,33 +252,33 @@ function renderHTML(): string {
     <div>
       <!-- Pipeline State Boxes -->
       <div class="card">
-        <div class="card-title">액터별 실시간 상태 (Autonomous Pipeline)</div>
+        <div class="card-title">역할별 실시간 상태 (Autonomous Convergence)</div>
         <div class="pipeline">
-          <div class="actor-box" id="box-chatgpt">
-            <div class="actor-name" style="color: var(--chatgpt);">ChatGPT</div>
-            <span class="actor-state idle" id="state-chatgpt">대기중</span>
+          <div class="actor-box" id="box-reviewer">
+            <div class="actor-name" id="name-reviewer">리뷰어 (ChatGPT)</div>
+            <span class="actor-state idle" id="state-reviewer">대기중</span>
           </div>
-          <div class="actor-box" id="box-gemini">
-            <div class="actor-name" style="color: var(--gemini);">Gemini</div>
-            <span class="actor-state idle" id="state-gemini">대기중</span>
+          <div class="actor-box" id="box-summarizer">
+            <div class="actor-name" id="name-summarizer">요약가 (Gemini)</div>
+            <span class="actor-state idle" id="state-summarizer">대기중</span>
           </div>
-          <div class="actor-box" id="box-claude">
-            <div class="actor-name" style="color: var(--claude);">Claude (Join)</div>
-            <span class="actor-state idle" id="state-claude">수렴 대기</span>
+          <div class="actor-box" id="box-synthesizer">
+            <div class="actor-name" id="name-synthesizer">종합자 (Claude)</div>
+            <span class="actor-state idle" id="state-synthesizer">수렴 대기</span>
           </div>
         </div>
 
         <!-- Artifact Output Tabs -->
         <div class="tabs">
-          <div class="tab active" data-target="tab-final">✨ Claude 최종본 (Final)</div>
-          <div class="tab" data-target="tab-chatgpt">ChatGPT 리뷰</div>
-          <div class="tab" data-target="tab-gemini">Gemini 요약</div>
+          <div class="tab active" data-target="tab-final">✨ 최종 종합 (Synthesis)</div>
+          <div class="tab" data-target="tab-review">🔍 리뷰 산출물 (Review)</div>
+          <div class="tab" data-target="tab-summary">📝 요약 산출물 (Summary)</div>
           <div class="tab" data-target="tab-lineage">🌳 계보 (Lineage)</div>
         </div>
 
         <div id="tab-final" class="tab-content active">(워크플로우가 완료되면 최종 산출물이 여기에 렌더링됩니다)</div>
-        <div id="tab-chatgpt" class="tab-content">(대기 중...)</div>
-        <div id="tab-gemini" class="tab-content">(대기 중...)</div>
+        <div id="tab-review" class="tab-content">(대기 중...)</div>
+        <div id="tab-summary" class="tab-content">(대기 중...)</div>
         <div id="tab-lineage" class="tab-content">(계보 트리 대기 중...)</div>
       </div>
 
@@ -238,44 +297,63 @@ function renderHTML(): string {
     const presets = {
       arch: {
         seed: \`${DEFAULT_SEED}\`,
-        chatgpt: \`${DEFAULT_CHATGPT_PROMPT}\`,
-        gemini: \`${DEFAULT_GEMINI_PROMPT}\`,
-        claude: \`${DEFAULT_CLAUDE_PROMPT}\`
+        reviewer: \`${DEFAULT_REVIEWER_PROMPT}\`,
+        summarizer: \`${DEFAULT_SUMMARIZER_PROMPT}\`,
+        synthesizer: \`${DEFAULT_SYNTHESIZER_PROMPT}\`
       },
       code: {
-        seed: \`Review and optimize this algorithm for high-concurrency event loops:\nfunction processQueue(queue) { while(queue.length) { handle(queue.shift()); } }\`,
-        chatgpt: \`[Role: Security & Robustness Expert]\nIdentify potential memory leaks, unhandled exceptions, and concurrency bottlenecks:\n\n{input}\`,
-        gemini: \`[Role: Performance & Algorithmic Engineer]\nSuggest performance optimizations and alternative data structures:\n\n{input}\`,
-        claude: \`[Role: Staff Software Engineer]\nSynthesize the security points and performance suggestions into an optimized production-grade TypeScript implementation:\n\n{inputs}\`
+        seed: \`Review and optimize this algorithm for high-concurrency event loops:\\nfunction processQueue(queue) { while(queue.length) { handle(queue.shift()); } }\`,
+        reviewer: \`[Role: Security & Robustness Expert]\\nIdentify potential memory leaks, unhandled exceptions, and concurrency bottlenecks:\\n\\n{input}\`,
+        summarizer: \`[Role: Performance & Algorithmic Engineer]\\nSuggest performance optimizations and alternative data structures:\\n\\n{input}\`,
+        synthesizer: \`[Role: Staff Software Engineer]\\nSynthesize the security points and performance suggestions into an optimized production-grade TypeScript implementation:\\n\\n{inputs}\`
       },
       biz: {
         seed: \`Business Plan: AI agent-driven automated personal shopping assistant browser plugin with zero API cost.\`,
-        chatgpt: \`[Role: VC Technical Due Diligence]\nAnalyze feasibility, platform risks, and architectural obstacles:\n\n{input}\`,
-        gemini: \`[Role: Growth & Product Strategist]\nHighlight unique value propositions and monetization avenues:\n\n{input}\`,
-        claude: \`[Role: Executive Business Consultant]\nCombine technical risks and growth strategies into an executive summary pitch deck draft:\n\n{inputs}\`
+        reviewer: \`[Role: VC Technical Due Diligence]\\nAnalyze feasibility, platform risks, and architectural obstacles:\\n\\n{input}\`,
+        summarizer: \`[Role: Growth & Product Strategist]\\nHighlight unique value propositions and monetization avenues:\\n\\n{input}\`,
+        synthesizer: \`[Role: Executive Business Consultant]\\nCombine technical risks and growth strategies into an executive summary pitch deck draft:\\n\\n{inputs}\`
       }
     };
 
     const seedInput = document.querySelector('#seedInput');
-    const chatgptPrompt = document.querySelector('#chatgptPrompt');
-    const geminiPrompt = document.querySelector('#geminiPrompt');
-    const claudePrompt = document.querySelector('#claudePrompt');
+    const reviewerProvider = document.querySelector('#reviewerProvider');
+    const summarizerProvider = document.querySelector('#summarizerProvider');
+    const synthesizerProvider = document.querySelector('#synthesizerProvider');
+    const reviewerPrompt = document.querySelector('#reviewerPrompt');
+    const summarizerPrompt = document.querySelector('#summarizerPrompt');
+    const synthesizerPrompt = document.querySelector('#synthesizerPrompt');
+
     const presetSelect = document.querySelector('#presetSelect');
     const runBtn = document.querySelector('#runBtn');
     const stopBtn = document.querySelector('#stopBtn');
     const globalStatus = document.querySelector('#globalStatus');
     const logContainer = document.querySelector('#logContainer');
 
+    function updateBoxTitles() {
+      const p1 = reviewerProvider.options[reviewerProvider.selectedIndex].text.split(' ')[0];
+      const p2 = summarizerProvider.options[summarizerProvider.selectedIndex].text.split(' ')[0];
+      const p3 = synthesizerProvider.options[synthesizerProvider.selectedIndex].text.split(' ')[0];
+
+      document.querySelector('#name-reviewer').textContent = '리뷰어 (' + p1 + ')';
+      document.querySelector('#name-summarizer').textContent = '요약가 (' + p2 + ')';
+      document.querySelector('#name-synthesizer').textContent = '종합자 (' + p3 + ')';
+    }
+
+    reviewerProvider.onchange = updateBoxTitles;
+    summarizerProvider.onchange = updateBoxTitles;
+    synthesizerProvider.onchange = updateBoxTitles;
+
     function applyPreset(key) {
       const p = presets[key];
       if (!p) return;
       seedInput.value = p.seed;
-      chatgptPrompt.value = p.chatgpt;
-      geminiPrompt.value = p.gemini;
-      claudePrompt.value = p.claude;
+      reviewerPrompt.value = p.reviewer;
+      summarizerPrompt.value = p.summarizer;
+      synthesizerPrompt.value = p.synthesizer;
     }
 
     applyPreset('arch');
+    updateBoxTitles();
     presetSelect.onchange = (e) => applyPreset(e.target.value);
 
     // Tab switching
@@ -301,8 +379,8 @@ function renderHTML(): string {
       logContainer.innerHTML = '';
     };
 
-    function updateActorState(id, state, text) {
-      const el = document.querySelector('#state-' + id);
+    function updateActorState(role, state, text) {
+      const el = document.querySelector('#state-' + role);
       if (!el) return;
       el.className = 'actor-state ' + state;
       el.textContent = text;
@@ -315,13 +393,17 @@ function renderHTML(): string {
       if (data.type === 'log') {
         addLog(data.topic, data.message);
       } else if (data.type === 'actor-state') {
-        updateActorState(data.actor, data.state, data.text);
+        updateActorState(data.role, data.state, data.text);
+      } else if (data.type === 'pipeline-init') {
+        document.querySelector('#name-reviewer').textContent = '리뷰어 (' + data.reviewer + ')';
+        document.querySelector('#name-summarizer').textContent = '요약가 (' + data.summarizer + ')';
+        document.querySelector('#name-synthesizer').textContent = '종합자 (' + data.synthesizer + ')';
       } else if (data.type === 'artifact') {
-        if (data.artifactType === 'chatgpt-review') {
-          document.querySelector('#tab-chatgpt').textContent = data.content;
-        } else if (data.artifactType === 'gemini-summary') {
-          document.querySelector('#tab-gemini').textContent = data.content;
-        } else if (data.artifactType === 'claude-final') {
+        if (data.artifactType === 'review') {
+          document.querySelector('#tab-review').textContent = data.content;
+        } else if (data.artifactType === 'summary') {
+          document.querySelector('#tab-summary').textContent = data.content;
+        } else if (data.artifactType === 'final-synthesis') {
           document.querySelector('#tab-final').textContent = data.content;
         }
       } else if (data.type === 'lineage') {
@@ -344,18 +426,21 @@ function renderHTML(): string {
         mode: document.querySelector('input[name="mode"]:checked').value,
         visible: document.querySelector('#visibleWindow').checked,
         seedText: seedInput.value,
-        chatgptPrompt: chatgptPrompt.value,
-        geminiPrompt: geminiPrompt.value,
-        claudePrompt: claudePrompt.value
+        reviewerProvider: reviewerProvider.value,
+        summarizerProvider: summarizerProvider.value,
+        synthesizerProvider: synthesizerProvider.value,
+        reviewerPrompt: reviewerPrompt.value,
+        summarizerPrompt: summarizerPrompt.value,
+        synthesizerPrompt: synthesizerPrompt.value
       };
 
       // Reset UI state
-      updateActorState('chatgpt', 'idle', '대기중');
-      updateActorState('gemini', 'idle', '대기중');
-      updateActorState('claude', 'idle', '수렴 대기');
+      updateActorState('reviewer', 'idle', '대기중');
+      updateActorState('summarizer', 'idle', '대기중');
+      updateActorState('synthesizer', 'idle', '수렴 대기');
       document.querySelector('#tab-final').textContent = '생성 중...';
-      document.querySelector('#tab-chatgpt').textContent = '대기 중...';
-      document.querySelector('#tab-gemini').textContent = '대기 중...';
+      document.querySelector('#tab-review').textContent = '대기 중...';
+      document.querySelector('#tab-summary').textContent = '대기 중...';
       document.querySelector('#tab-lineage').textContent = '추적 중...';
 
       addLog('control', '워크플로우 실행을 요청했습니다...');
@@ -395,12 +480,29 @@ async function runPipeline(config: RunConfig): Promise<void> {
 
   isRunning = true;
   broadcastSSE({ type: 'status', status: 'running' });
-  broadcastSSE({ type: 'log', topic: 'system', message: `Starting pipeline in ${config.mode.toUpperCase()} mode...` });
 
   const PORT = 4173;
   if (config.mode === 'sim' && !simServer) {
     simServer = startDemoServer(PORT);
   }
+
+  const isLive = config.mode === 'live';
+  const reviewerSpec = resolveProvider(config.reviewerProvider, isLive, PORT);
+  const summarizerSpec = resolveProvider(config.summarizerProvider, isLive, PORT);
+  const synthesizerSpec = resolveProvider(config.synthesizerProvider, isLive, PORT);
+
+  broadcastSSE({
+    type: 'pipeline-init',
+    reviewer: reviewerSpec.displayName,
+    summarizer: summarizerSpec.displayName,
+    synthesizer: synthesizerSpec.displayName,
+  });
+
+  broadcastSSE({
+    type: 'log',
+    topic: 'system',
+    message: `Starting pipeline [Reviewer:${reviewerSpec.displayName}, Summarizer:${summarizerSpec.displayName}, Synthesizer:${synthesizerSpec.displayName}] in ${config.mode.toUpperCase()} mode...`
+  });
 
   currentBrowser = new PersistentBrowserRuntime({
     headless: !config.visible,
@@ -409,28 +511,23 @@ async function runPipeline(config: RunConfig): Promise<void> {
 
   currentRuntime = new WebActorRuntime({ browser: currentBrowser });
 
-  const isLive = config.mode === 'live';
-  const chatGptUrl = isLive ? 'https://chatgpt.com' : `http://127.0.0.1:${PORT}/sim/chatgpt`;
-  const geminiUrl = isLive ? 'https://gemini.google.com/app' : `http://127.0.0.1:${PORT}/sim/gemini`;
-  const claudeUrl = isLive ? 'https://claude.ai/new' : `http://127.0.0.1:${PORT}/sim/claude`;
-
   // Attach bus listeners for real-time dashboard updates
   currentRuntime.bus.subscribe('*', (event: Event) => {
     broadcastSSE({ type: 'log', topic: event.topic, message: `from ${event.source} (artifact: ${event.artifactId ?? 'none'})` });
 
     if (event.topic === 'proposal.created') {
-      broadcastSSE({ type: 'actor-state', actor: 'chatgpt', state: 'active', text: '스트리밍 중...' });
-      broadcastSSE({ type: 'actor-state', actor: 'gemini', state: 'active', text: '스트리밍 중...' });
-    } else if (event.topic === 'chatgpt.reviewed') {
-      broadcastSSE({ type: 'actor-state', actor: 'chatgpt', state: 'done', text: '완료' });
+      broadcastSSE({ type: 'actor-state', role: 'reviewer', state: 'active', text: `${reviewerSpec.displayName} 스트리밍 중...` });
+      broadcastSSE({ type: 'actor-state', role: 'summarizer', state: 'active', text: `${summarizerSpec.displayName} 스트리밍 중...` });
+    } else if (event.topic === 'review.completed') {
+      broadcastSSE({ type: 'actor-state', role: 'reviewer', state: 'done', text: '완료' });
       const art = currentRuntime?.store.tryGet(event.artifactId!);
       if (art) broadcastSSE({ type: 'artifact', artifactType: art.type, content: art.content });
-    } else if (event.topic === 'gemini.summarized') {
-      broadcastSSE({ type: 'actor-state', actor: 'gemini', state: 'done', text: '완료' });
+    } else if (event.topic === 'summary.completed') {
+      broadcastSSE({ type: 'actor-state', role: 'summarizer', state: 'done', text: '완료' });
       const art = currentRuntime?.store.tryGet(event.artifactId!);
       if (art) broadcastSSE({ type: 'artifact', artifactType: art.type, content: art.content });
-    } else if (event.topic === 'claude.completed') {
-      broadcastSSE({ type: 'actor-state', actor: 'claude', state: 'done', text: '완료' });
+    } else if (event.topic === 'synthesis.completed') {
+      broadcastSSE({ type: 'actor-state', role: 'synthesizer', state: 'done', text: '완료' });
       const art = currentRuntime?.store.tryGet(event.artifactId!);
       if (art) {
         broadcastSSE({ type: 'artifact', artifactType: art.type, content: art.content });
@@ -440,64 +537,65 @@ async function runPipeline(config: RunConfig): Promise<void> {
         }
       }
     } else if (event.topic === 'actor.failed') {
-      broadcastSSE({ type: 'actor-state', actor: event.source.replace('-reviewer', '').replace('-summarizer', '').replace('-refiner', ''), state: 'error', text: '에러 발생' });
+      const failedRole = event.source.replace('role-', '');
+      broadcastSSE({ type: 'actor-state', role: failedRole, state: 'error', text: '오류 발생' });
     }
   });
 
-  // Register ChatGPT Actor
+  // Register Role 1: Reviewer
   currentRuntime.register(
     new WebActor({
-      id: 'chatgpt-reviewer',
-      profile: 'chatgpt',
-      url: chatGptUrl,
-      adapter: new ChatGPTAdapter({ timeoutMs: 90000, stabilityWaitMs: 2500 }),
+      id: 'role-reviewer',
+      profile: reviewerSpec.profile,
+      url: reviewerSpec.url,
+      adapter: reviewerSpec.adapter,
       activation: {
         trigger: topicTrigger('proposal.created'),
         resolver: new SingleArtifactResolver({ types: ['proposal'] }),
       },
-      outputType: 'chatgpt-review',
-      outputTopic: 'chatgpt.reviewed',
-      buildPrompt: (inputs) => config.chatgptPrompt.replace('{input}', inputs[0].content),
+      outputType: 'review',
+      outputTopic: 'review.completed',
+      buildPrompt: (inputs) => config.reviewerPrompt.replace('{input}', inputs[0].content),
     })
   );
 
-  // Register Gemini Actor
+  // Register Role 2: Summarizer
   currentRuntime.register(
     new WebActor({
-      id: 'gemini-summarizer',
-      profile: 'gemini',
-      url: geminiUrl,
-      adapter: new GeminiAdapter({ timeoutMs: 90000, stabilityWaitMs: 2500 }),
+      id: 'role-summarizer',
+      profile: summarizerSpec.profile,
+      url: summarizerSpec.url,
+      adapter: summarizerSpec.adapter,
       activation: {
         trigger: topicTrigger('proposal.created'),
         resolver: new SingleArtifactResolver({ types: ['proposal'] }),
       },
-      outputType: 'gemini-summary',
-      outputTopic: 'gemini.summarized',
-      buildPrompt: (inputs) => config.geminiPrompt.replace('{input}', inputs[0].content),
+      outputType: 'summary',
+      outputTopic: 'summary.completed',
+      buildPrompt: (inputs) => config.summarizerPrompt.replace('{input}', inputs[0].content),
     })
   );
 
-  // Register Claude Actor (Join)
+  // Register Role 3: Synthesizer (Correlation Join)
   currentRuntime.register(
     new WebActor({
-      id: 'claude-refiner',
-      profile: 'claude',
-      url: claudeUrl,
-      adapter: new ClaudeAdapter({ timeoutMs: 120000, stabilityWaitMs: 2500 }),
+      id: 'role-synthesizer',
+      profile: synthesizerSpec.profile,
+      url: synthesizerSpec.url,
+      adapter: synthesizerSpec.adapter,
       activation: {
-        trigger: topicTrigger('chatgpt.reviewed', 'gemini.summarized'),
+        trigger: topicTrigger('review.completed', 'summary.completed'),
         resolver: new CorrelationJoinResolver({
-          requiredTypes: ['chatgpt-review', 'gemini-summary'],
+          requiredTypes: ['review', 'summary'],
         }),
       },
-      outputType: 'claude-final',
-      outputTopic: 'claude.completed',
+      outputType: 'final-synthesis',
+      outputTopic: 'synthesis.completed',
       buildPrompt: (inputs) => {
         const parts = inputs.map(
           (art) => `=== INPUT FROM ${art.createdBy.toUpperCase()} (${art.type}) ===\n${art.content}`
         );
-        return config.claudePrompt.replace('{inputs}', parts.join('\n\n'));
+        return config.synthesizerPrompt.replace('{inputs}', parts.join('\n\n'));
       },
     })
   );
@@ -512,7 +610,7 @@ async function runPipeline(config: RunConfig): Promise<void> {
     createdBy: 'dashboard-user',
     createdAt: new Date().toISOString(),
     parentIds: [],
-    metadata: { correlationId, title: 'Dashboard Execution' },
+    metadata: { correlationId, title: 'Dashboard Dynamic Execution' },
   };
 
   currentRuntime.store.put(seedProposal);
@@ -522,7 +620,7 @@ async function runPipeline(config: RunConfig): Promise<void> {
   (async () => {
     try {
       const finalDonePromise = currentRuntime!.bus.waitFor(
-        (e) => e.topic === 'claude.completed' && e.correlationId === correlationId,
+        (e) => e.topic === 'synthesis.completed' && e.correlationId === correlationId,
         180000
       );
 
@@ -547,7 +645,7 @@ async function runPipeline(config: RunConfig): Promise<void> {
       await currentRuntime!.waitForIdle();
 
       broadcastSSE({ type: 'status', status: 'completed' });
-      broadcastSSE({ type: 'log', topic: 'success', message: 'All actors converged and final artifact is ready!' });
+      broadcastSSE({ type: 'log', topic: 'success', message: 'All actors converged and final synthesis artifact is ready!' });
     } catch (err: any) {
       broadcastSSE({ type: 'status', status: 'idle' });
       broadcastSSE({ type: 'log', topic: 'error', message: err.message });
