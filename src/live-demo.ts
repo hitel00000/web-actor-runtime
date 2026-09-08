@@ -127,11 +127,20 @@ Goal: Leverage independent browser contexts for ChatGPT, Gemini, and Claude with
   console.log(`\n[System] Seed Proposal Artifact created: ${seedProposal.id}`);
   console.log(`[System] Publishing 'proposal.created' event to EventBus...\n`);
 
-  // Wait for the final convergence from Claude
+  // Wait for the final convergence from Claude OR early failure from an upstream actor
   const finalDonePromise = runtime.bus.waitFor(
     (e) => e.topic === 'claude.completed' && e.correlationId === correlationId,
     180000
   );
+
+  const failurePromise = new Promise<never>((_, reject) => {
+    runtime.bus.on('actor.failed', (e) => {
+      if (e.correlationId === correlationId) {
+        const errorMsg = (e.payload as any)?.error ?? 'Unknown actor execution error';
+        reject(new Error(`[Pipeline Aborted] Upstream actor '${e.source}' failed: ${errorMsg}`));
+      }
+    });
+  });
 
   await runtime.bus.publish({
     id: randomUUID(),
@@ -142,7 +151,8 @@ Goal: Leverage independent browser contexts for ChatGPT, Gemini, and Claude with
     timestamp: new Date().toISOString(),
   });
 
-  const finalEvent = await finalDonePromise;
+  // Race between completion and upstream failure
+  const finalEvent = await Promise.race([finalDonePromise, failurePromise]);
   console.log(`\n[Event] Received final event: ${finalEvent.topic} (Artifact: ${finalEvent.artifactId})`);
 
   await runtime.waitForIdle();

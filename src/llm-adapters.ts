@@ -1,9 +1,30 @@
-import type { Page } from 'playwright';
+import type { Page, Locator } from 'playwright';
 import type { WebAdapter } from './adapter.js';
 
 export interface LLMAdapterOptions {
   timeoutMs?: number;
   stabilityWaitMs?: number;
+  debugScreenshotPath?: string;
+}
+
+/**
+ * Robust text insertion for modern Rich Text Editors (ProseMirror, Lexical, Draft.js)
+ * Used by ChatGPT, Claude, and Gemini web UIs.
+ */
+async function typeIntoRichEditor(page: Page, inputLocator: Locator, text: string): Promise<void> {
+  await inputLocator.scrollIntoViewIfNeeded().catch(() => undefined);
+  await inputLocator.click();
+
+  // Select all existing text and delete it cleanly
+  await page.keyboard.press('ControlOrMeta+A');
+  await page.keyboard.press('Backspace');
+
+  // insertText dispatches native 'beforeinput' and 'input' events with the exact text,
+  // which properly synchronizes React / ProseMirror internal state!
+  await page.keyboard.insertText(text);
+
+  // Short pause to allow state reconciliation
+  await page.waitForTimeout(500);
 }
 
 /**
@@ -13,6 +34,7 @@ export interface LLMAdapterOptions {
  */
 async function waitForStreamingContent(
   page: Page,
+  serviceName: string,
   selectors: {
     container: string;
     stopButton?: string;
@@ -20,56 +42,78 @@ async function waitForStreamingContent(
     errorSelector?: string;
   },
   timeoutMs = 90000,
-  stabilityWaitMs = 2500
+  stabilityWaitMs = 2500,
+  debugScreenshotPath?: string
 ): Promise<string> {
   const startTime = Date.now();
   let lastText = '';
   let lastChangeTime = Date.now();
+  let containerFound = false;
 
-  // First wait for the response container to appear
-  await page.locator(selectors.container).last().waitFor({ state: 'attached', timeout: 30000 });
-
+  // Poll with periodic selector checking
   while (Date.now() - startTime < timeoutMs) {
-    // Check for error banner or rate limits
+    // 1. Check for blocking modals or error banners (Cloudflare, Rate limits, Login prompts)
+    const currentUrl = page.url();
+    if (currentUrl.includes('/auth') || currentUrl.includes('/login')) {
+      throw new Error(`[${serviceName}] Browser was redirected to login page: ${currentUrl}. Please run 'npm run setup:login' first.`);
+    }
+
     if (selectors.errorSelector) {
       const errorEl = page.locator(selectors.errorSelector).first();
-      if ((await errorEl.count()) > 0 && (await errorEl.isVisible())) {
-        const errText = await errorEl.textContent();
-        throw new Error(`[LLM Web UI Error / Rate Limit]: ${errText?.trim()}`);
+      if ((await errorEl.count()) > 0 && (await errorEl.isVisible().catch(() => false))) {
+        const errText = await errorEl.textContent().catch(() => '');
+        throw new Error(`[${serviceName} Error / Rate Limit]: ${errText?.trim()}`);
       }
     }
 
-    // Check if copy button is already visible and stop button is gone
-    if (selectors.stopButton && selectors.copyButton) {
-      const stopVisible = await page.locator(selectors.stopButton).isVisible().catch(() => false);
-      const copyVisible = await page.locator(selectors.copyButton).last().isVisible().catch(() => false);
-      if (!stopVisible && copyVisible) {
-        const finalText = await page.locator(selectors.container).last().innerText();
-        if (finalText.trim().length > 0) {
-          return finalText.trim();
+    // 2. Locate the response container
+    const locator = page.locator(selectors.container);
+    const count = await locator.count().catch(() => 0);
+
+    if (count > 0) {
+      containerFound = true;
+      const currentLocator = locator.last();
+
+      // Check if copy button is visible and stop button is gone
+      if (selectors.stopButton && selectors.copyButton) {
+        const stopVisible = await page.locator(selectors.stopButton).first().isVisible().catch(() => false);
+        const copyVisible = await page.locator(selectors.copyButton).last().isVisible().catch(() => false);
+        if (!stopVisible && copyVisible) {
+          const finalText = await currentLocator.innerText().catch(() => '');
+          if (finalText.trim().length > 0) {
+            return finalText.trim();
+          }
         }
       }
-    }
 
-    // Measure text stability
-    const currentLocator = page.locator(selectors.container).last();
-    const currentText = (await currentLocator.innerText().catch(() => '')).trim();
+      // Check text content stabilization
+      const currentText = (await currentLocator.innerText().catch(() => '')).trim();
 
-    if (currentText.length > 0 && currentText !== lastText) {
-      lastText = currentText;
-      lastChangeTime = Date.now();
-    } else if (currentText.length > 0 && Date.now() - lastChangeTime >= stabilityWaitMs) {
-      // Content has stabilized for stabilityWaitMs
-      return currentText;
+      if (currentText.length > 0 && currentText !== lastText) {
+        lastText = currentText;
+        lastChangeTime = Date.now();
+      } else if (currentText.length > 0 && Date.now() - lastChangeTime >= stabilityWaitMs) {
+        // Output stabilized for stabilityWaitMs
+        return currentText;
+      }
     }
 
     await page.waitForTimeout(400);
   }
 
+  // If timed out, capture screenshot for immediate visual diagnosis
+  const dumpPath = debugScreenshotPath ?? `debug-${serviceName}-timeout.png`;
+  await page.screenshot({ path: dumpPath, fullPage: true }).catch(() => undefined);
+  const pageTitle = await page.title().catch(() => 'unknown');
+  const pageUrl = page.url();
+
   if (lastText.length > 0) {
     return lastText;
   }
-  throw new Error(`Timed out waiting for streaming response after ${timeoutMs}ms`);
+
+  throw new Error(
+    `[${serviceName}] Timed out waiting for response after ${timeoutMs}ms. (Page: "${pageTitle}" at ${pageUrl}, Container found: ${containerFound}). Screenshot saved to ${dumpPath}`
+  );
 }
 
 // ============================================================================
@@ -80,37 +124,71 @@ export class ChatGPTAdapter implements WebAdapter {
 
   async open(page: Page, url = 'https://chatgpt.com'): Promise<void> {
     await page.goto(url, { waitUntil: 'domcontentloaded' });
-    // Wait for the prompt input to be ready
-    await page.waitForSelector('#prompt-textarea, [contenteditable="true"], textarea', {
+
+    // Dismiss common guest / consent dialogs if present
+    const dismissBtn = page.locator('button:has-text("Stay logged out"), button:has-text("Dismiss"), button:has-text("Accept")').first();
+    if ((await dismissBtn.count()) > 0 && (await dismissBtn.isVisible().catch(() => false))) {
+      await dismissBtn.click().catch(() => undefined);
+    }
+
+    // Wait for the prompt input
+    await page.waitForSelector('#prompt-textarea, div[contenteditable="true"], textarea', {
       timeout: 30000,
     });
   }
 
   async send(page: Page, text: string): Promise<void> {
-    const inputLocator = page.locator('#prompt-textarea, [contenteditable="true"], textarea').first();
-    await inputLocator.click();
-    await inputLocator.fill(text);
+    const inputLocator = page.locator('#prompt-textarea, div[contenteditable="true"], textarea').first();
+    await inputLocator.waitFor({ state: 'visible', timeout: 15000 });
 
-    // Click send or press Enter
-    const sendButton = page.locator('button[data-testid="send-button"], button[aria-label*="Send"]').first();
-    if ((await sendButton.count()) > 0 && (await sendButton.isEnabled())) {
-      await sendButton.click();
-    } else {
-      await page.keyboard.press('Enter');
+    // Type text using rich editor helper to trigger ProseMirror React state
+    await typeIntoRichEditor(page, inputLocator, text);
+
+    // Wait up to 3 seconds for the send button to become enabled
+    const sendBtn = page.locator('button[data-testid="send-button"], button[aria-label*="Send"], button[aria-label*="보내기"]').first();
+    let sent = false;
+
+    for (let i = 0; i < 6; i++) {
+      if ((await sendBtn.count()) > 0 && (await sendBtn.isEnabled().catch(() => false))) {
+        await sendBtn.click().catch(() => undefined);
+        sent = true;
+        break;
+      }
+      await page.waitForTimeout(500);
     }
+
+    if (!sent) {
+      // Fallback: press Enter directly in the editor
+      await inputLocator.press('Enter');
+    }
+
+    // Wait briefly to confirm message was dispatched (stop button appeared or input cleared)
+    await page.waitForTimeout(800);
   }
 
   async waitForResponse(page: Page): Promise<string> {
     return waitForStreamingContent(
       page,
+      'ChatGPT',
       {
-        container: '[data-message-author-role="assistant"], .agent-turn, .markdown, #response',
-        stopButton: 'button[data-testid="stop-button"]',
-        copyButton: 'button[data-testid="copy-turn-action-button"], .copy-button',
-        errorSelector: '.text-red-500, [data-testid="error-banner"], .error-message',
+        // Resilient selectors covering various ChatGPT web versions & DOM structures
+        container: [
+          '[data-message-author-role="assistant"] .markdown',
+          '[data-message-author-role="assistant"]',
+          'div.agent-turn .markdown',
+          'div.agent-turn',
+          'article[data-testid^="conversation-turn-"] .markdown',
+          'article:has(button[data-testid*="copy"])',
+          'div.prose',
+          '#response',
+        ].join(', '),
+        stopButton: 'button[data-testid="stop-button"], button[aria-label*="Stop"]',
+        copyButton: 'button[data-testid*="copy"], button[aria-label*="Copy"], .copy-button',
+        errorSelector: '[data-testid="error-banner"], .text-red-500, .error-message',
       },
       this.options.timeoutMs ?? 90000,
-      this.options.stabilityWaitMs ?? 2500
+      this.options.stabilityWaitMs ?? 2500,
+      this.options.debugScreenshotPath
     );
   }
 }
@@ -130,28 +208,48 @@ export class GeminiAdapter implements WebAdapter {
 
   async send(page: Page, text: string): Promise<void> {
     const inputLocator = page.locator('div[role="textbox"], rich-textarea p, #prompt-textarea, textarea').first();
-    await inputLocator.click();
-    await inputLocator.fill(text);
+    await inputLocator.waitFor({ state: 'visible', timeout: 15000 });
+
+    await typeIntoRichEditor(page, inputLocator, text);
 
     const sendBtn = page.locator('button[aria-label*="Send"], button[aria-label*="전송"], button.send-button').first();
-    if ((await sendBtn.count()) > 0 && (await sendBtn.isEnabled())) {
-      await sendBtn.click();
-    } else {
-      await page.keyboard.press('Enter');
+    let sent = false;
+
+    for (let i = 0; i < 6; i++) {
+      if ((await sendBtn.count()) > 0 && (await sendBtn.isEnabled().catch(() => false))) {
+        await sendBtn.click().catch(() => undefined);
+        sent = true;
+        break;
+      }
+      await page.waitForTimeout(500);
     }
+
+    if (!sent) {
+      await inputLocator.press('Enter');
+    }
+
+    await page.waitForTimeout(800);
   }
 
   async waitForResponse(page: Page): Promise<string> {
     return waitForStreamingContent(
       page,
+      'Gemini',
       {
-        container: 'message-content, model-response, .model-response-text, #response',
+        container: [
+          'message-content',
+          'model-response',
+          '.model-response-text',
+          '.response-container-content',
+          '#response',
+        ].join(', '),
         stopButton: 'button[aria-label*="Stop"], button[aria-label*="중지"]',
         copyButton: 'button[aria-label*="Copy"], button[aria-label*="복사"], .copy-button',
         errorSelector: '.error-container, .alert-box, .error-message',
       },
       this.options.timeoutMs ?? 90000,
-      this.options.stabilityWaitMs ?? 2500
+      this.options.stabilityWaitMs ?? 2500,
+      this.options.debugScreenshotPath
     );
   }
 }
@@ -171,28 +269,49 @@ export class ClaudeAdapter implements WebAdapter {
 
   async send(page: Page, text: string): Promise<void> {
     const inputLocator = page.locator('div[contenteditable="true"], fieldset textarea, #prompt-textarea').first();
-    await inputLocator.click();
-    await inputLocator.fill(text);
+    await inputLocator.waitFor({ state: 'visible', timeout: 15000 });
+
+    await typeIntoRichEditor(page, inputLocator, text);
 
     const sendBtn = page.locator('button[aria-label*="Send Message"], button[aria-label*="전송"], button[aria-label*="Send"]').first();
-    if ((await sendBtn.count()) > 0 && (await sendBtn.isEnabled())) {
-      await sendBtn.click();
-    } else {
-      await page.keyboard.press('Enter');
+    let sent = false;
+
+    for (let i = 0; i < 6; i++) {
+      if ((await sendBtn.count()) > 0 && (await sendBtn.isEnabled().catch(() => false))) {
+        await sendBtn.click().catch(() => undefined);
+        sent = true;
+        break;
+      }
+      await page.waitForTimeout(500);
     }
+
+    if (!sent) {
+      await inputLocator.press('Enter');
+    }
+
+    await page.waitForTimeout(800);
   }
 
   async waitForResponse(page: Page): Promise<string> {
     return waitForStreamingContent(
       page,
+      'Claude',
       {
-        container: 'div.font-claude-message, [data-is-streaming="false"], .standard-markdown, #response',
+        container: [
+          'div.font-claude-message',
+          '[data-is-streaming="false"]',
+          '.standard-markdown',
+          'div.font-user-message ~ div',
+          '#response',
+        ].join(', '),
         stopButton: 'button[aria-label*="Stop generating"], button[aria-label*="중단"]',
-        copyButton: 'button[aria-label*="Copy to clipboard"], .copy-button',
+        copyButton: 'button[aria-label*="Copy to clipboard"], button[aria-label*="Copy"], .copy-button',
         errorSelector: '.text-danger, .error-banner, .error-message',
       },
       this.options.timeoutMs ?? 90000,
-      this.options.stabilityWaitMs ?? 2500
+      this.options.stabilityWaitMs ?? 2500,
+      this.options.debugScreenshotPath
     );
   }
 }
+
