@@ -63,9 +63,13 @@ export class ArtifactStore {
     return this.mapRow(row);
   }
 
-  list(): Artifact[] {
-    const rows = this.db.prepare(`SELECT * FROM artifacts ORDER BY created_at ASC`).all() as any[];
-    return rows.map((r) => this.mapRow(r));
+  list(limit?: number): Artifact[] {
+    const sql = limit ? `SELECT * FROM artifacts ORDER BY created_at DESC LIMIT ?` : `SELECT * FROM artifacts ORDER BY created_at ASC`;
+    const rows = limit
+      ? (this.db.prepare(sql).all(limit) as any[])
+      : (this.db.prepare(sql).all() as any[]);
+    const items = rows.map((r) => this.mapRow(r));
+    return limit ? items.reverse() : items;
   }
 
   findByType(type: string): Artifact[] {

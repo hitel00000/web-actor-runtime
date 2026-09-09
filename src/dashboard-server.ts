@@ -6,6 +6,7 @@ import { topicTrigger, SingleArtifactResolver, CorrelationJoinResolver } from '.
 import { ChatGPTAdapter, GeminiAdapter, ClaudeAdapter } from './llm-adapters.js';
 import { PersistentBrowserRuntime } from './persistent-browser.js';
 import { startDemoServer } from './demo-server.js';
+import { ArtifactStore } from './store.js';
 import type { Artifact, Event } from './types.js';
 
 export type LLMProvider = 'chatgpt' | 'gemini' | 'claude';
@@ -293,12 +294,19 @@ function renderHTML(): string {
           <div class="tab" data-target="tab-review">🔍 리뷰 산출물 (Review)</div>
           <div class="tab" data-target="tab-summary">📝 요약 산출물 (Summary)</div>
           <div class="tab" data-target="tab-lineage">🌳 계보 (Lineage)</div>
+          <div class="tab" data-target="tab-history">📜 이력 (History)</div>
         </div>
 
         <div id="tab-final" class="tab-content active">(워크플로우가 완료되면 최종 산출물이 여기에 렌더링됩니다)</div>
         <div id="tab-review" class="tab-content">(대기 중...)</div>
         <div id="tab-summary" class="tab-content">(대기 중...)</div>
         <div id="tab-lineage" class="tab-content">(계보 트리 대기 중...)</div>
+        <div id="tab-history" class="tab-content">
+          <table id="historyTable" style="width:100%; border-collapse: collapse;">
+            <thead><tr><th>시간</th><th>타입</th><th>생성자</th><th>내용(미리보기)</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
       </div>
 
       <!-- Real-time Event Log -->
@@ -397,6 +405,20 @@ function renderHTML(): string {
     document.querySelector('#clearLogBtn').onclick = () => {
       logContainer.innerHTML = '';
     };
+
+    // Load History
+    async function loadHistory() {
+      const res = await fetch('/api/history');
+      const data = await res.json();
+      const tbody = document.querySelector('#historyTable tbody');
+      tbody.innerHTML = '';
+      data.artifacts.forEach(art => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${art.createdAt.split('T')[1].split('.')[0]}</td><td>${art.type}</td><td>${art.createdBy}</td><td>${art.content.substring(0, 50)}...</td>`;
+        tbody.appendChild(tr);
+      });
+    }
+    loadHistory();
 
     function updateActorState(role, state, text) {
       const el = document.querySelector('#state-' + role);
@@ -761,6 +783,22 @@ export function startDashboard(port = 3000) {
       await stopPipeline();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
+      return;
+    }
+
+    // History API: get past artifacts and runs
+    if (url.pathname === '/api/history' && req.method === 'GET') {
+      const store = new ArtifactStore();
+      try {
+        const artifacts = store.list(50);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ artifacts }));
+      } catch (err: any) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      } finally {
+        store.close();
+      }
       return;
     }
 
