@@ -138,14 +138,19 @@ function renderHTML(): string {
     .btn-danger { background: var(--danger); }
 
     /* Actors Pipeline Progress Grid */
-    .pipeline { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-bottom: 1.5rem; }
-    .actor-box { background: #0f172a; border: 1px solid var(--border); border-radius: 6px; padding: 1rem; text-align: center; }
+    .pipeline { display: flex; align-items: center; justify-content: space-between; position: relative; margin-bottom: 1.5rem; gap: 0.5rem; }
+    .actor-box { flex: 1; background: #0f172a; border: 1px solid var(--border); border-radius: 8px; padding: 1rem; text-align: center; position: relative; z-index: 2; transition: all 0.3s ease; }
+    .actor-box.active-glow { border-color: var(--primary); box-shadow: 0 0 12px rgba(59, 130, 246, 0.4); }
     .actor-name { font-weight: 700; font-size: 0.9rem; margin-bottom: 0.5rem; }
     .actor-state { font-size: 0.8rem; font-weight: 600; padding: 0.2rem 0.5rem; border-radius: 4px; display: inline-block; }
     .actor-state.idle { background: #1e293b; color: var(--muted); }
     .actor-state.active { background: #1e3a8a; color: #93c5fd; }
     .actor-state.done { background: #064e3b; color: #6ee7b7; }
     .actor-state.error { background: #7f1d1d; color: #fca5a5; }
+
+    .pipeline-connector { display: flex; align-items: center; justify-content: center; color: var(--border); font-size: 1.2rem; font-weight: bold; width: 24px; z-index: 1; transition: color 0.3s; }
+    .pipeline-connector.active { color: var(--primary); animation: pulse-arrow 1s infinite alternate; }
+    @keyframes pulse-arrow { from { opacity: 0.4; transform: translateX(-2px); } to { opacity: 1; transform: translateX(2px); } }
 
     /* Tabs & Content Output */
     .tabs { display: flex; gap: 0.5rem; border-bottom: 1px solid var(--border); margin-bottom: 1rem; overflow-x: auto; }
@@ -270,10 +275,12 @@ function renderHTML(): string {
             <div class="actor-name" id="name-reviewer">리뷰어 (ChatGPT)</div>
             <span class="actor-state idle" id="state-reviewer">대기중</span>
           </div>
+          <div class="pipeline-connector" id="conn-1">➔</div>
           <div class="actor-box" id="box-summarizer">
             <div class="actor-name" id="name-summarizer">요약가 (Gemini)</div>
             <span class="actor-state idle" id="state-summarizer">대기중</span>
           </div>
+          <div class="pipeline-connector" id="conn-2">➔</div>
           <div class="actor-box" id="box-synthesizer">
             <div class="actor-name" id="name-synthesizer">종합자 (Claude)</div>
             <span class="actor-state idle" id="state-synthesizer">수렴 대기</span>
@@ -393,9 +400,34 @@ function renderHTML(): string {
 
     function updateActorState(role, state, text) {
       const el = document.querySelector('#state-' + role);
-      if (!el) return;
+      const box = document.querySelector('#box-' + role);
+      if (!el || !box) return;
       el.className = 'actor-state ' + state;
       el.textContent = text;
+
+      if (state === 'active') {
+        box.classList.add('active-glow');
+      } else {
+        box.classList.remove('active-glow');
+      }
+
+      // Update pipeline connectors active state
+      const rState = document.querySelector('#state-reviewer').textContent;
+      const sState = document.querySelector('#state-summarizer').textContent;
+      const conn1 = document.querySelector('#conn-1');
+      const conn2 = document.querySelector('#conn-2');
+
+      if (rState.includes('완료') || rState.includes('중')) {
+        conn1.classList.add('active');
+      } else {
+        conn1.classList.remove('active');
+      }
+
+      if (sState.includes('완료') || sState.includes('중')) {
+        conn2.classList.add('active');
+      } else {
+        conn2.classList.remove('active');
+      }
     }
 
     // Connect Server-Sent Events (SSE)
