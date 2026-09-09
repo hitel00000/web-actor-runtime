@@ -151,8 +151,19 @@ function renderHTML(): string {
     .tabs { display: flex; gap: 0.5rem; border-bottom: 1px solid var(--border); margin-bottom: 1rem; overflow-x: auto; }
     .tab { padding: 0.5rem 1rem; font-size: 0.85rem; font-weight: 600; cursor: pointer; border-bottom: 2px solid transparent; color: var(--muted); }
     .tab.active { color: var(--text); border-bottom-color: var(--primary); }
-    .tab-content { display: none; background: #0f172a; border: 1px solid var(--border); border-radius: 6px; padding: 1rem; max-height: 420px; overflow-y: auto; font-family: monospace; font-size: 0.88rem; white-space: pre-wrap; word-break: break-word; }
+    .tab-content { display: none; background: #0f172a; border: 1px solid var(--border); border-radius: 6px; padding: 1rem; max-height: 420px; overflow-y: auto; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 0.95rem; line-height: 1.6; color: #e2e8f0; }
     .tab-content.active { display: block; }
+    .tab-content h1, .tab-content h2, .tab-content h3 { margin-top: 1.5rem; margin-bottom: 1rem; color: #f8fafc; }
+    .tab-content p { margin-bottom: 1rem; }
+    .tab-content ul, .tab-content ol { margin-bottom: 1rem; padding-left: 1.5rem; }
+    .tab-content li { margin-bottom: 0.5rem; }
+    .tab-content code { background: #1e293b; padding: 0.2rem 0.4rem; border-radius: 4px; font-family: monospace; font-size: 0.9em; }
+    .tab-content pre { background: #1e293b; padding: 1rem; border-radius: 8px; overflow-x: auto; margin-bottom: 1rem; }
+    .tab-content pre code { background: none; padding: 0; }
+    .tab-content blockquote { border-left: 4px solid var(--primary); padding-left: 1rem; color: var(--muted); font-style: italic; margin-bottom: 1rem; }
+    .tab-content table { width: 100%; border-collapse: collapse; margin-bottom: 1rem; }
+    .tab-content th, .tab-content td { border: 1px solid var(--border); padding: 0.75rem; text-align: left; }
+    .tab-content th { background: #1e293b; }
 
     /* Event Logs */
     .log-container { background: #0f172a; border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem; height: 180px; overflow-y: auto; font-family: monospace; font-size: 0.8rem; color: #cbd5e1; }
@@ -162,6 +173,7 @@ function renderHTML(): string {
   </style>
 </head>
 <body>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 
   <header>
     <h1>🕹️ Web Actor Runtime — Control Panel</h1>
@@ -399,12 +411,13 @@ function renderHTML(): string {
         document.querySelector('#name-summarizer').textContent = '요약가 (' + data.summarizer + ')';
         document.querySelector('#name-synthesizer').textContent = '종합자 (' + data.synthesizer + ')';
       } else if (data.type === 'artifact') {
+        const html = marked.parse(data.content);
         if (data.artifactType === 'review') {
-          document.querySelector('#tab-review').textContent = data.content;
+          document.querySelector('#tab-review').innerHTML = html;
         } else if (data.artifactType === 'summary') {
-          document.querySelector('#tab-summary').textContent = data.content;
+          document.querySelector('#tab-summary').innerHTML = html;
         } else if (data.artifactType === 'final-synthesis') {
-          document.querySelector('#tab-final').textContent = data.content;
+          document.querySelector('#tab-final').innerHTML = html;
         }
       } else if (data.type === 'lineage') {
         document.querySelector('#tab-lineage').textContent = data.treeText;
