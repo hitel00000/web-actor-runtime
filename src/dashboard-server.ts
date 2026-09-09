@@ -259,9 +259,15 @@ function renderHTML(): string {
           <textarea id="synthesizerPrompt" rows="2"></textarea>
         </div>
 
-        <div style="display: flex; gap: 0.75rem;">
+        <div style="display: flex; gap: 0.75rem; margin-bottom: 0.75rem;">
           <button id="runBtn" class="btn" style="flex: 1;">🚀 워크플로우 실행 (Run Pipeline)</button>
           <button id="stopBtn" class="btn btn-danger" style="display: none;">중단</button>
+        </div>
+
+        <div style="display: flex; gap: 0.5rem;">
+          <button id="loginChatGPTBtn" class="btn" style="background: var(--chatgpt); font-size: 0.8rem; padding: 0.4rem 0.6rem; flex: 1;">🔑 ChatGPT 로그인</button>
+          <button id="loginGeminiBtn" class="btn" style="background: #2563eb; font-size: 0.8rem; padding: 0.4rem 0.6rem; flex: 1;">🔑 Gemini 로그인</button>
+          <button id="loginClaudeBtn" class="btn" style="background: var(--claude); font-size: 0.8rem; padding: 0.4rem 0.6rem; flex: 1;">🔑 Claude 로그인</button>
         </div>
       </div>
     </div>
@@ -527,6 +533,20 @@ function renderHTML(): string {
       addLog('control', '파이프라인 중단을 요청했습니다...');
       await fetch('/api/stop', { method: 'POST' });
     };
+
+    // Login Manager Handlers
+    async function triggerLogin(service) {
+      addLog('control', service + ' 로그인 창을 띄웁니다...');
+      await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ service })
+      });
+    }
+
+    document.querySelector('#loginChatGPTBtn').onclick = () => triggerLogin('chatgpt');
+    document.querySelector('#loginGeminiBtn').onclick = () => triggerLogin('gemini');
+    document.querySelector('#loginClaudeBtn').onclick = () => triggerLogin('claude');
   </script>
 </body>
 </html>`;
@@ -783,6 +803,35 @@ export function startDashboard(port = 3000) {
       await stopPipeline();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
+      return;
+    }
+
+    // Login Manager API: launch visible browser for session setup
+    if (url.pathname === '/api/login' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (chunk) => (body += chunk));
+      req.on('end', async () => {
+        try {
+          const { service } = JSON.parse(body);
+          const urls: Record<string, string> = {
+            chatgpt: 'https://chatgpt.com',
+            gemini: 'https://gemini.google.com/app',
+            claude: 'https://claude.ai/new',
+          };
+          const targetUrl = urls[service] ?? 'https://chatgpt.com';
+          
+          // Launch a temporary visible browser session for user login
+          const setupBrowser = new PersistentBrowserRuntime({ headless: false });
+          const page = await setupBrowser.page(service);
+          await page.goto(targetUrl).catch(() => {});
+
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, message: `Opened login window for ${service}` }));
+        } catch (err: any) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
       return;
     }
 
