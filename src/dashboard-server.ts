@@ -420,7 +420,8 @@ function renderHTML(): string {
       tbody.innerHTML = '';
       data.artifacts.forEach(art => {
         const tr = document.createElement('tr');
-        tr.innerHTML = `<td>${art.createdAt.split('T')[1].split('.')[0]}</td><td>${art.type}</td><td>${art.createdBy}</td><td>${art.content.substring(0, 50)}...</td>`;
+        const timeStr = art.createdAt.split('T')[1].split('.')[0];
+        tr.innerHTML = '<td>' + timeStr + '</td><td>' + art.type + '</td><td>' + art.createdBy + '</td><td>' + art.content.substring(0, 50) + '...</td>';
         tbody.appendChild(tr);
       });
     }
