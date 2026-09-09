@@ -295,12 +295,15 @@ function renderHTML(): string {
         </div>
 
         <!-- Artifact Output Tabs -->
-        <div class="tabs">
-          <div class="tab active" data-target="tab-final">✨ 최종 종합 (Synthesis)</div>
-          <div class="tab" data-target="tab-review">🔍 리뷰 산출물 (Review)</div>
-          <div class="tab" data-target="tab-summary">📝 요약 산출물 (Summary)</div>
-          <div class="tab" data-target="tab-lineage">🌳 계보 (Lineage)</div>
-          <div class="tab" data-target="tab-history">📜 이력 (History)</div>
+        <div class="tabs" style="align-items: center; justify-content: space-between;">
+          <div style="display: flex; gap: 0.5rem; overflow-x: auto;">
+            <div class="tab active" data-target="tab-final">✨ 최종 종합 (Synthesis)</div>
+            <div class="tab" data-target="tab-review">🔍 리뷰 산출물 (Review)</div>
+            <div class="tab" data-target="tab-summary">📝 요약 산출물 (Summary)</div>
+            <div class="tab" data-target="tab-lineage">🌳 계보 (Lineage)</div>
+            <div class="tab" data-target="tab-history">📜 이력 (History)</div>
+          </div>
+          <button id="exportBtn" class="btn" style="background: #059669; font-size: 0.8rem; padding: 0.35rem 0.75rem; whitespace: nowrap;">📥 내보내기 (.md)</button>
         </div>
 
         <div id="tab-final" class="tab-content active">(워크플로우가 완료되면 최종 산출물이 여기에 렌더링됩니다)</div>
@@ -479,6 +482,7 @@ function renderHTML(): string {
           document.querySelector('#tab-summary').innerHTML = html;
         } else if (data.artifactType === 'final-synthesis') {
           document.querySelector('#tab-final').innerHTML = html;
+          latestFinalMarkdown = data.content;
         }
       } else if (data.type === 'lineage') {
         document.querySelector('#tab-lineage').textContent = data.treeText;
@@ -548,6 +552,24 @@ function renderHTML(): string {
     document.querySelector('#loginChatGPTBtn').onclick = () => triggerLogin('chatgpt');
     document.querySelector('#loginGeminiBtn').onclick = () => triggerLogin('gemini');
     document.querySelector('#loginClaudeBtn').onclick = () => triggerLogin('claude');
+
+    // Export Handler
+    let latestFinalMarkdown = '';
+    document.querySelector('#exportBtn').onclick = () => {
+      const activeTabContent = document.querySelector('.tab-content.active');
+      const text = latestFinalMarkdown || activeTabContent.innerText || activeTabContent.textContent;
+      if (!text || text.includes('(대기 중') || text.includes('(워크플로우가')) {
+        alert('내보낼 산출물이 없습니다.');
+        return;
+      }
+      const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'artifact-synthesis-' + new Date().toISOString().slice(0, 10) + '.md';
+      a.click();
+      URL.revokeObjectURL(url);
+    };
   </script>
 </body>
 </html>`;
