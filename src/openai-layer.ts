@@ -1,11 +1,11 @@
 import http from 'node:http';
 import { ChatGPTAdapter, GeminiAdapter } from './llm-adapters.js';
-import { BrowserRuntime } from './browser.js';
+import { PersistentBrowserRuntime } from './persistent-browser.js';
 
 export async function startOpenAILayer(port = 3001) {
 
-  const browser = new BrowserRuntime();
-  await browser.start(true);
+  const browser = new PersistentBrowserRuntime({ headless: true });
+  await browser.start();
 
   const server = http.createServer(async (req, res) => {
     res.setHeader('Content-Type', 'application/json');
