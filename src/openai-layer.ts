@@ -9,6 +9,11 @@ export async function startOpenAILayer(port = 3001) {
 
   const server = http.createServer(async (req, res) => {
     res.setHeader('Content-Type', 'application/json');
+    // /v1/models
+    if (req.method === 'GET' && req.url === '/v1/models') {
+      res.end(JSON.stringify({ object: 'list', data: [{ id: 'gpt-4', object: 'model', created: 0 }, { id: 'gemini-1.5', object: 'model', created: 0 }] }));
+      return;
+    }
     if (req.method !== 'POST' || !req.url?.startsWith('/v1/chat/completions')) {
       res.statusCode = 404;
       res.end(JSON.stringify({ error: 'Not found' }));
