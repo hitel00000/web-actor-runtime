@@ -6,6 +6,7 @@
   "scripts": {
     "demo": "tsx src/demo.ts",
     "demo:llm": "tsx src/live-demo.ts",
+    "openai-proxy": "tsx src/openai-layer.ts",
     "demo:llm:live": "tsx src/live-demo.ts --live",
     "dashboard": "tsx src/dashboard-server.ts",
     "setup:login": "tsx src/setup-login.ts",
